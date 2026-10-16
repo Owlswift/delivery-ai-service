@@ -1,0 +1,1525 @@
+{
+  "auth": {
+    "headers": [
+      "X-Provider-Id",
+      "X-Timestamp",
+      "X-Signature",
+      "X-Correlation-Id (optional)"
+    ],
+    "scheme": "HMAC-SHA256 request signature",
+    "signed_message": "timestamp \\n METHOD \\n path+query \\n sha256(body) hex",
+    "timestamp": "unix seconds; rejected outside the configured window"
+  },
+  "event_types": [
+    "offer.created",
+    "offer.updated",
+    "offer.withdrawn",
+    "offer.expired",
+    "booking.cancelled",
+    "booking.expired"
+  ],
+  "operations": {
+    "assign_offer": {
+      "args": "AssignOfferArgs",
+      "executor": "provider_server",
+      "idempotency_key": true,
+      "result": "AssignmentInfo"
+    },
+    "create_booking": {
+      "args": "CreateBookingArgs",
+      "executor": "provider_server",
+      "idempotency_key": true,
+      "result": "ProviderBooking"
+    },
+    "estimate_fare": {
+      "args": "EstimateFareArgs",
+      "executor": "provider_server",
+      "idempotency_key": false,
+      "result": "FareQuote"
+    },
+    "get_booking_status": {
+      "args": "GetBookingStatusArgs",
+      "executor": "provider_server",
+      "idempotency_key": false,
+      "result": "BookingStatusResult"
+    },
+    "resolve_address": {
+      "args": "ResolveAddressArgs",
+      "executor": "provider_server",
+      "idempotency_key": false,
+      "result": "AddressResolution"
+    }
+  },
+  "outcomes": {
+    "rejected": "definite refusal or validation failure; never retried",
+    "succeeded": "result required and schema-validated",
+    "unavailable": "not processed; retried with backoff",
+    "unknown": "may have been processed; retried with the same idempotency key (reconcile=true)"
+  },
+  "schemas": {
+    "AddressResolution": {
+      "$defs": {
+        "CoordinatesSource": {
+          "enum": [
+            "provider",
+            "geocoded"
+          ],
+          "title": "CoordinatesSource",
+          "type": "string"
+        },
+        "ResolutionStatus": {
+          "enum": [
+            "resolved",
+            "ambiguous",
+            "not_found"
+          ],
+          "title": "ResolutionStatus",
+          "type": "string"
+        },
+        "ResolvedAddress": {
+          "properties": {
+            "coordinates_source": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CoordinatesSource"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "formatted_address": {
+              "title": "Formatted Address",
+              "type": "string"
+            },
+            "latitude": {
+              "anyOf": [
+                {
+                  "maximum": 90,
+                  "minimum": -90,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Latitude"
+            },
+            "longitude": {
+              "anyOf": [
+                {
+                  "maximum": 180,
+                  "minimum": -180,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Longitude"
+            },
+            "place_id": {
+              "title": "Place Id",
+              "type": "string"
+            },
+            "precision": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Precision"
+            }
+          },
+          "required": [
+            "place_id",
+            "formatted_address"
+          ],
+          "title": "ResolvedAddress",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/ResolvedAddress"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "input": {
+          "title": "Input",
+          "type": "string"
+        },
+        "resolved": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolvedAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "$ref": "#/$defs/ResolutionStatus"
+        }
+      },
+      "required": [
+        "input",
+        "status"
+      ],
+      "title": "AddressResolution",
+      "type": "object"
+    },
+    "AssignOfferArgs": {
+      "properties": {
+        "booking_reference": {
+          "title": "Booking Reference",
+          "type": "string"
+        },
+        "offer_id": {
+          "title": "Offer Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "booking_reference",
+        "offer_id"
+      ],
+      "title": "AssignOfferArgs",
+      "type": "object"
+    },
+    "AssignmentInfo": {
+      "properties": {
+        "courier_id": {
+          "title": "Courier Id",
+          "type": "string"
+        },
+        "offer_id": {
+          "title": "Offer Id",
+          "type": "string"
+        },
+        "status": {
+          "default": "assigned",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "offer_id",
+        "courier_id"
+      ],
+      "title": "AssignmentInfo",
+      "type": "object"
+    },
+    "BookingPayload": {
+      "$defs": {
+        "Confirmation": {
+          "description": "The user's explicit confirmation, as recorded by the workflow.",
+          "properties": {
+            "confirmed_at": {
+              "format": "date-time",
+              "title": "Confirmed At",
+              "type": "string"
+            },
+            "fingerprint": {
+              "title": "Fingerprint",
+              "type": "string"
+            },
+            "quote_id": {
+              "title": "Quote Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "confirmed_at",
+            "quote_id",
+            "fingerprint"
+          ],
+          "title": "Confirmation",
+          "type": "object"
+        },
+        "CoordinatesSource": {
+          "enum": [
+            "provider",
+            "geocoded"
+          ],
+          "title": "CoordinatesSource",
+          "type": "string"
+        },
+        "MaxBudget": {
+          "properties": {
+            "amount": {
+              "title": "Amount",
+              "type": "string"
+            },
+            "currency": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Currency"
+            }
+          },
+          "required": [
+            "amount"
+          ],
+          "title": "MaxBudget",
+          "type": "object"
+        },
+        "ResolvedAddress": {
+          "properties": {
+            "coordinates_source": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CoordinatesSource"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "formatted_address": {
+              "title": "Formatted Address",
+              "type": "string"
+            },
+            "latitude": {
+              "anyOf": [
+                {
+                  "maximum": 90,
+                  "minimum": -90,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Latitude"
+            },
+            "longitude": {
+              "anyOf": [
+                {
+                  "maximum": 180,
+                  "minimum": -180,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Longitude"
+            },
+            "place_id": {
+              "title": "Place Id",
+              "type": "string"
+            },
+            "precision": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Precision"
+            }
+          },
+          "required": [
+            "place_id",
+            "formatted_address"
+          ],
+          "title": "ResolvedAddress",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "base_fare": {
+          "title": "Base Fare",
+          "type": "string"
+        },
+        "confirmation": {
+          "$ref": "#/$defs/Confirmation"
+        },
+        "currency": {
+          "title": "Currency",
+          "type": "string"
+        },
+        "destination": {
+          "$ref": "#/$defs/ResolvedAddress"
+        },
+        "max_budget": {
+          "$ref": "#/$defs/MaxBudget"
+        },
+        "package_description": {
+          "title": "Package Description",
+          "type": "string"
+        },
+        "pickup": {
+          "$ref": "#/$defs/ResolvedAddress"
+        },
+        "quote_id": {
+          "title": "Quote Id",
+          "type": "string"
+        },
+        "recipient_name": {
+          "title": "Recipient Name",
+          "type": "string"
+        },
+        "recipient_phone": {
+          "title": "Recipient Phone",
+          "type": "string"
+        },
+        "sender_phone": {
+          "title": "Sender Phone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pickup",
+        "destination",
+        "package_description",
+        "recipient_name",
+        "recipient_phone",
+        "sender_phone",
+        "quote_id",
+        "base_fare",
+        "currency",
+        "max_budget",
+        "confirmation"
+      ],
+      "title": "BookingPayload",
+      "type": "object"
+    },
+    "BookingStatusResult": {
+      "$defs": {
+        "AssignmentInfo": {
+          "properties": {
+            "courier_id": {
+              "title": "Courier Id",
+              "type": "string"
+            },
+            "offer_id": {
+              "title": "Offer Id",
+              "type": "string"
+            },
+            "status": {
+              "default": "assigned",
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "offer_id",
+            "courier_id"
+          ],
+          "title": "AssignmentInfo",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "assignment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AssignmentInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "booking_reference": {
+          "title": "Booking Reference",
+          "type": "string"
+        },
+        "booking_status": {
+          "title": "Booking Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "booking_reference",
+        "booking_status"
+      ],
+      "title": "BookingStatusResult",
+      "type": "object"
+    },
+    "Confirmation": {
+      "description": "The user's explicit confirmation, as recorded by the workflow.",
+      "properties": {
+        "confirmed_at": {
+          "format": "date-time",
+          "title": "Confirmed At",
+          "type": "string"
+        },
+        "fingerprint": {
+          "title": "Fingerprint",
+          "type": "string"
+        },
+        "quote_id": {
+          "title": "Quote Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "confirmed_at",
+        "quote_id",
+        "fingerprint"
+      ],
+      "title": "Confirmation",
+      "type": "object"
+    },
+    "Courier": {
+      "properties": {
+        "courier_id": {
+          "title": "Courier Id",
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": true,
+          "title": "Details",
+          "type": "object"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "phone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Phone"
+        }
+      },
+      "required": [
+        "courier_id"
+      ],
+      "title": "Courier",
+      "type": "object"
+    },
+    "CreateBookingArgs": {
+      "$defs": {
+        "BookingPayload": {
+          "properties": {
+            "base_fare": {
+              "title": "Base Fare",
+              "type": "string"
+            },
+            "confirmation": {
+              "$ref": "#/$defs/Confirmation"
+            },
+            "currency": {
+              "title": "Currency",
+              "type": "string"
+            },
+            "destination": {
+              "$ref": "#/$defs/ResolvedAddress"
+            },
+            "max_budget": {
+              "$ref": "#/$defs/MaxBudget"
+            },
+            "package_description": {
+              "title": "Package Description",
+              "type": "string"
+            },
+            "pickup": {
+              "$ref": "#/$defs/ResolvedAddress"
+            },
+            "quote_id": {
+              "title": "Quote Id",
+              "type": "string"
+            },
+            "recipient_name": {
+              "title": "Recipient Name",
+              "type": "string"
+            },
+            "recipient_phone": {
+              "title": "Recipient Phone",
+              "type": "string"
+            },
+            "sender_phone": {
+              "title": "Sender Phone",
+              "type": "string"
+            }
+          },
+          "required": [
+            "pickup",
+            "destination",
+            "package_description",
+            "recipient_name",
+            "recipient_phone",
+            "sender_phone",
+            "quote_id",
+            "base_fare",
+            "currency",
+            "max_budget",
+            "confirmation"
+          ],
+          "title": "BookingPayload",
+          "type": "object"
+        },
+        "Confirmation": {
+          "description": "The user's explicit confirmation, as recorded by the workflow.",
+          "properties": {
+            "confirmed_at": {
+              "format": "date-time",
+              "title": "Confirmed At",
+              "type": "string"
+            },
+            "fingerprint": {
+              "title": "Fingerprint",
+              "type": "string"
+            },
+            "quote_id": {
+              "title": "Quote Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "confirmed_at",
+            "quote_id",
+            "fingerprint"
+          ],
+          "title": "Confirmation",
+          "type": "object"
+        },
+        "CoordinatesSource": {
+          "enum": [
+            "provider",
+            "geocoded"
+          ],
+          "title": "CoordinatesSource",
+          "type": "string"
+        },
+        "MaxBudget": {
+          "properties": {
+            "amount": {
+              "title": "Amount",
+              "type": "string"
+            },
+            "currency": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Currency"
+            }
+          },
+          "required": [
+            "amount"
+          ],
+          "title": "MaxBudget",
+          "type": "object"
+        },
+        "ResolvedAddress": {
+          "properties": {
+            "coordinates_source": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CoordinatesSource"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "formatted_address": {
+              "title": "Formatted Address",
+              "type": "string"
+            },
+            "latitude": {
+              "anyOf": [
+                {
+                  "maximum": 90,
+                  "minimum": -90,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Latitude"
+            },
+            "longitude": {
+              "anyOf": [
+                {
+                  "maximum": 180,
+                  "minimum": -180,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Longitude"
+            },
+            "place_id": {
+              "title": "Place Id",
+              "type": "string"
+            },
+            "precision": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Precision"
+            }
+          },
+          "required": [
+            "place_id",
+            "formatted_address"
+          ],
+          "title": "ResolvedAddress",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/BookingPayload"
+        }
+      },
+      "required": [
+        "payload"
+      ],
+      "title": "CreateBookingArgs",
+      "type": "object"
+    },
+    "ErrorResponse": {
+      "$defs": {
+        "ErrorBody": {
+          "properties": {
+            "code": {
+              "title": "Code",
+              "type": "string"
+            },
+            "details": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Details"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "title": "ErrorBody",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorBody"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "title": "ErrorResponse",
+      "type": "object"
+    },
+    "EstimateFareArgs": {
+      "$defs": {
+        "CoordinatesSource": {
+          "enum": [
+            "provider",
+            "geocoded"
+          ],
+          "title": "CoordinatesSource",
+          "type": "string"
+        },
+        "ResolvedAddress": {
+          "properties": {
+            "coordinates_source": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CoordinatesSource"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "formatted_address": {
+              "title": "Formatted Address",
+              "type": "string"
+            },
+            "latitude": {
+              "anyOf": [
+                {
+                  "maximum": 90,
+                  "minimum": -90,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Latitude"
+            },
+            "longitude": {
+              "anyOf": [
+                {
+                  "maximum": 180,
+                  "minimum": -180,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Longitude"
+            },
+            "place_id": {
+              "title": "Place Id",
+              "type": "string"
+            },
+            "precision": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Precision"
+            }
+          },
+          "required": [
+            "place_id",
+            "formatted_address"
+          ],
+          "title": "ResolvedAddress",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "destination": {
+          "$ref": "#/$defs/ResolvedAddress"
+        },
+        "pickup": {
+          "$ref": "#/$defs/ResolvedAddress"
+        }
+      },
+      "required": [
+        "pickup",
+        "destination"
+      ],
+      "title": "EstimateFareArgs",
+      "type": "object"
+    },
+    "EventResponse": {
+      "properties": {
+        "notified": {
+          "title": "Notified",
+          "type": "boolean"
+        },
+        "original_result": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Original Result"
+        },
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result",
+        "notified"
+      ],
+      "title": "EventResponse",
+      "type": "object"
+    },
+    "FareQuote": {
+      "$defs": {
+        "Route": {
+          "properties": {
+            "distance_km": {
+              "title": "Distance Km",
+              "type": "number"
+            },
+            "duration_min": {
+              "title": "Duration Min",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "distance_km",
+            "duration_min"
+          ],
+          "title": "Route",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "base_fare": {
+          "title": "Base Fare",
+          "type": "string"
+        },
+        "currency": {
+          "title": "Currency",
+          "type": "string"
+        },
+        "destination_place_id": {
+          "title": "Destination Place Id",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "pickup_place_id": {
+          "title": "Pickup Place Id",
+          "type": "string"
+        },
+        "quote_id": {
+          "title": "Quote Id",
+          "type": "string"
+        },
+        "route": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Route"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "quote_id",
+        "base_fare",
+        "currency",
+        "expires_at",
+        "pickup_place_id",
+        "destination_place_id"
+      ],
+      "title": "FareQuote",
+      "type": "object"
+    },
+    "GetBookingStatusArgs": {
+      "properties": {
+        "booking_reference": {
+          "title": "Booking Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "booking_reference"
+      ],
+      "title": "GetBookingStatusArgs",
+      "type": "object"
+    },
+    "LeaseRequest": {
+      "properties": {
+        "limit": {
+          "default": 10,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "LeaseRequest",
+      "type": "object"
+    },
+    "OfferEventPayload": {
+      "$defs": {
+        "Courier": {
+          "properties": {
+            "courier_id": {
+              "title": "Courier Id",
+              "type": "string"
+            },
+            "details": {
+              "additionalProperties": true,
+              "title": "Details",
+              "type": "object"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Name"
+            },
+            "phone": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Phone"
+            }
+          },
+          "required": [
+            "courier_id"
+          ],
+          "title": "Courier",
+          "type": "object"
+        }
+      },
+      "description": "Payload of offer.created / offer.updated / offer.withdrawn / offer.expired.",
+      "properties": {
+        "courier": {
+          "$ref": "#/$defs/Courier"
+        },
+        "currency": {
+          "title": "Currency",
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "offer_id": {
+          "title": "Offer Id",
+          "type": "string"
+        },
+        "pickup_distance_km": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pickup Distance Km"
+        },
+        "pickup_eta_min": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pickup Eta Min"
+        },
+        "price": {
+          "title": "Price",
+          "type": "string"
+        }
+      },
+      "required": [
+        "offer_id",
+        "courier",
+        "price",
+        "currency"
+      ],
+      "title": "OfferEventPayload",
+      "type": "object"
+    },
+    "OperationAck": {
+      "$defs": {
+        "OperationStatus": {
+          "enum": [
+            "pending",
+            "succeeded",
+            "rejected",
+            "exhausted"
+          ],
+          "title": "OperationStatus",
+          "type": "string"
+        }
+      },
+      "properties": {
+        "duplicate": {
+          "default": false,
+          "title": "Duplicate",
+          "type": "boolean"
+        },
+        "notified": {
+          "default": false,
+          "title": "Notified",
+          "type": "boolean"
+        },
+        "operation_id": {
+          "title": "Operation Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/OperationStatus"
+        }
+      },
+      "required": [
+        "operation_id",
+        "status"
+      ],
+      "title": "OperationAck",
+      "type": "object"
+    },
+    "OperationEnvelope": {
+      "$defs": {
+        "Executor": {
+          "enum": [
+            "provider_server"
+          ],
+          "title": "Executor",
+          "type": "string"
+        },
+        "OperationType": {
+          "enum": [
+            "resolve_address",
+            "estimate_fare",
+            "create_booking",
+            "assign_offer",
+            "get_booking_status"
+          ],
+          "title": "OperationType",
+          "type": "string"
+        }
+      },
+      "properties": {
+        "args": {
+          "additionalProperties": true,
+          "title": "Args",
+          "type": "object"
+        },
+        "attempt": {
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "correlation_id": {
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "executor": {
+          "$ref": "#/$defs/Executor",
+          "default": "provider_server"
+        },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Idempotency Key"
+        },
+        "lease_expires_at": {
+          "format": "date-time",
+          "title": "Lease Expires At",
+          "type": "string"
+        },
+        "operation_id": {
+          "title": "Operation Id",
+          "type": "string"
+        },
+        "provider_id": {
+          "title": "Provider Id",
+          "type": "string"
+        },
+        "reconcile": {
+          "default": false,
+          "title": "Reconcile",
+          "type": "boolean"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "timeout_s": {
+          "title": "Timeout S",
+          "type": "integer"
+        },
+        "type": {
+          "$ref": "#/$defs/OperationType"
+        }
+      },
+      "required": [
+        "operation_id",
+        "type",
+        "provider_id",
+        "session_id",
+        "correlation_id",
+        "attempt",
+        "timeout_s",
+        "created_at",
+        "lease_expires_at",
+        "args"
+      ],
+      "title": "OperationEnvelope",
+      "type": "object"
+    },
+    "OperationError": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "OperationError",
+      "type": "object"
+    },
+    "OperationResultRequest": {
+      "$defs": {
+        "OperationError": {
+          "properties": {
+            "code": {
+              "title": "Code",
+              "type": "string"
+            },
+            "fields": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Fields"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "title": "OperationError",
+          "type": "object"
+        },
+        "Outcome": {
+          "enum": [
+            "succeeded",
+            "rejected",
+            "unavailable",
+            "unknown"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "properties": {
+        "attempt": {
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperationError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        }
+      },
+      "required": [
+        "attempt",
+        "outcome"
+      ],
+      "title": "OperationResultRequest",
+      "type": "object"
+    },
+    "ProviderBooking": {
+      "properties": {
+        "reference": {
+          "minLength": 1,
+          "title": "Reference",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reference",
+        "status"
+      ],
+      "title": "ProviderBooking",
+      "type": "object"
+    },
+    "ProviderEvent": {
+      "properties": {
+        "booking_reference": {
+          "minLength": 1,
+          "title": "Booking Reference",
+          "type": "string"
+        },
+        "event_id": {
+          "minLength": 1,
+          "title": "Event Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        },
+        "type": {
+          "enum": [
+            "offer.created",
+            "offer.updated",
+            "offer.withdrawn",
+            "offer.expired",
+            "booking.cancelled",
+            "booking.expired"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "booking_reference",
+        "type",
+        "occurred_at"
+      ],
+      "title": "ProviderEvent",
+      "type": "object"
+    },
+    "ResolveAddressArgs": {
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "ResolveAddressArgs",
+      "type": "object"
+    },
+    "ResolvedAddress": {
+      "$defs": {
+        "CoordinatesSource": {
+          "enum": [
+            "provider",
+            "geocoded"
+          ],
+          "title": "CoordinatesSource",
+          "type": "string"
+        }
+      },
+      "properties": {
+        "coordinates_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CoordinatesSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "formatted_address": {
+          "title": "Formatted Address",
+          "type": "string"
+        },
+        "latitude": {
+          "anyOf": [
+            {
+              "maximum": 90,
+              "minimum": -90,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latitude"
+        },
+        "longitude": {
+          "anyOf": [
+            {
+              "maximum": 180,
+              "minimum": -180,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Longitude"
+        },
+        "place_id": {
+          "title": "Place Id",
+          "type": "string"
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Precision"
+        }
+      },
+      "required": [
+        "place_id",
+        "formatted_address"
+      ],
+      "title": "ResolvedAddress",
+      "type": "object"
+    }
+  },
+  "version": "1"
+}
